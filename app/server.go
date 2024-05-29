@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,17 +26,35 @@ const (
 	bufferSize                = 4096
 )
 
-func HttpResponse(conn net.Conn, status string, body *[]byte, contentType string, contentEncoding *string) {
+func HttpResponse(conn net.Conn, status string, body []byte, contentType string, contentEncoding *string) {
 	statusLine := "HTTP/1.1 " + status + "\r\n"
 	headers := "Content-Type: " + contentType + "\r\n"
 	if contentEncoding != nil {
 		headers += "Content-Encoding: " + *contentEncoding + "\r\n"
 	}
+
 	if body != nil {
-		bodyLength := strconv.Itoa(len(*body))
+		var compressedBody []byte
+		if contentEncoding != nil && *contentEncoding == "gzip" {
+			var buf bytes.Buffer
+			gw := gzip.NewWriter(&buf)
+			_, err := gw.Write(body)
+			if err != nil {
+				fmt.Println("Error compressing response body:", err)
+				conn.Write([]byte(statusLine + headers + "\r\n"))
+				conn.Write(body)
+				return
+			}
+			gw.Close()
+			compressedBody = buf.Bytes()
+		} else {
+			compressedBody = body
+		}
+
+		bodyLength := strconv.Itoa(len(compressedBody))
 		headers += "Content-Length: " + bodyLength + "\r\n\r\n"
 		conn.Write([]byte(statusLine + headers))
-		conn.Write(*body)
+		conn.Write(compressedBody)
 	} else {
 		headers += "\r\n"
 		conn.Write([]byte(statusLine + headers))
@@ -124,7 +144,7 @@ func Handler(conn net.Conn, directory string) {
 func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
 	if len(pathSegments) > 1 {
 		responseBody := []byte(pathSegments[1])
-		HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
+		HttpResponse(conn, StatusOK, responseBody, contentTypePlainText, contentEncoding)
 	} else {
 		HttpResponse(conn, StatusOK, nil, contentTypePlainText, contentEncoding)
 	}
@@ -133,7 +153,7 @@ func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
 func handleUserAgent(conn net.Conn, request *http.Request, contentEncoding *string) {
 	userAgentData := request.UserAgent()
 	responseBody := []byte(userAgentData)
-	HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
+	HttpResponse(conn, StatusOK, responseBody, contentTypePlainText, contentEncoding)
 }
 
 func handleFiles(conn net.Conn, request *http.Request, directory string, pathSegments []string, contentEncoding *string) {
