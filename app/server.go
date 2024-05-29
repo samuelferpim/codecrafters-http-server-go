@@ -24,14 +24,7 @@ const (
 	bufferSize                = 4096
 )
 
-var (
-	contentEncodingGzip = "gzip"
-	validPaths          = map[string]struct{}{
-		"echo":       {},
-		"user-agent": {},
-		"files":      {},
-	}
-)
+var contentEncodingGzip = "gzip"
 
 func HttpResponse(conn net.Conn, status string, body *[]byte, contentType string, contentEncoding *string) {
 	statusLine := "HTTP/1.1 " + status + "\r\n"
@@ -58,12 +51,23 @@ func GetPathSegments(request *http.Request) []string {
 
 func ProcessPath(request *http.Request) ([]string, error) {
 	segments := GetPathSegments(request)
+	validPaths := map[string]struct{}{
+		"echo":       {},
+		"user-agent": {},
+		"files":      {},
+	}
+
 	if len(segments) == 0 {
 		return []string{}, nil
 	}
+
 	if _, exists := validPaths[segments[0]]; exists {
-		return segments[:2], nil
+		if len(segments) > 1 {
+			return segments[:2], nil
+		}
+		return segments[:1], nil
 	}
+
 	return nil, errors.New("invalid path")
 }
 
@@ -72,7 +76,7 @@ func Handler(conn net.Conn, directory string) {
 
 	request, err := http.ReadRequest(bufio.NewReader(conn))
 	if err != nil {
-		logError("Error reading request:", err)
+		fmt.Println("Error reading request:", err)
 		HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
 		return
 	}
@@ -89,8 +93,8 @@ func Handler(conn net.Conn, directory string) {
 	}
 
 	var contentEncoding *string
-	acceptEncoding := strings.ToLower(request.Header.Get("Accept-Encoding"))
-	if strings.Contains(acceptEncoding, "gzip") {
+	acceptEncoding := request.Header.Get("Accept-Encoding")
+	if strings.Contains(strings.ToLower(acceptEncoding), "gzip") {
 		contentEncoding = &contentEncodingGzip
 	}
 
@@ -107,11 +111,12 @@ func Handler(conn net.Conn, directory string) {
 }
 
 func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
-	var responseBody []byte
 	if len(pathSegments) > 1 {
-		responseBody = []byte(pathSegments[1])
+		responseBody := []byte(pathSegments[1])
+		HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
+	} else {
+		HttpResponse(conn, StatusOK, nil, contentTypePlainText, contentEncoding)
 	}
-	HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
 }
 
 func handleUserAgent(conn net.Conn, request *http.Request, contentEncoding *string) {
@@ -129,67 +134,57 @@ func handleFiles(conn net.Conn, request *http.Request, directory string, pathSeg
 
 	switch request.Method {
 	case http.MethodGet:
-		readFile(conn, filePath, contentEncoding)
-	case http.MethodPost:
-		writeFile(conn, filePath, request.Body)
-	default:
-		HttpResponse(conn, StatusNotFound, nil, contentTypePlainText, nil)
-	}
-}
+		file, err := os.Open(filePath)
+		if err != nil {
+			HttpResponse(conn, StatusNotFound, nil, contentTypePlainText, nil)
+			return
+		}
+		defer file.Close()
 
-func readFile(conn net.Conn, filePath string, contentEncoding *string) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		HttpResponse(conn, StatusNotFound, nil, contentTypePlainText, nil)
-		return
-	}
-	defer file.Close()
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-		return
-	}
-
-	headers := "HTTP/1.1 " + StatusOK + "\r\n" +
-		"Content-Type: " + contentTypeOctetStream + "\r\n" +
-		"Content-Length: " + strconv.FormatInt(fileInfo.Size(), 10) + "\r\n"
-	if contentEncoding != nil {
-		headers += "Content-Encoding: " + *contentEncoding + "\r\n"
-	}
-	headers += "\r\n"
-	conn.Write([]byte(headers))
-
-	buffer := make([]byte, bufferSize)
-	for {
-		n, err := file.Read(buffer)
-		if err != nil && err != io.EOF {
+		fileInfo, err := file.Stat()
+		if err != nil {
 			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
 			return
 		}
-		if n == 0 {
-			break
+
+		headers := "HTTP/1.1 " + StatusOK + "\r\n" +
+			"Content-Type: " + contentTypeOctetStream + "\r\n" +
+			"Content-Length: " + strconv.FormatInt(fileInfo.Size(), 10) + "\r\n"
+		if contentEncoding != nil {
+			headers += "Content-Encoding: " + *contentEncoding + "\r\n"
 		}
-		conn.Write(buffer[:n])
-	}
-}
+		headers += "\r\n"
+		conn.Write([]byte(headers))
 
-func writeFile(conn net.Conn, filePath string, body io.ReadCloser) {
-	fileContents, err := io.ReadAll(body)
-	if err != nil {
-		HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-		return
-	}
-	err = os.WriteFile(filePath, fileContents, 0644)
-	if err != nil {
-		HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-		return
-	}
-	HttpResponse(conn, StatusCreated, nil, contentTypePlainText, nil)
-}
+		buffer := make([]byte, bufferSize)
+		for {
+			n, err := file.Read(buffer)
+			if err != nil && err != io.EOF {
+				HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
+				return
+			}
+			if n == 0 {
+				break
+			}
+			conn.Write(buffer[:n])
+		}
 
-func logError(message string, err error) {
-	fmt.Println(message, err)
+	case http.MethodPost:
+		fileContents, err := io.ReadAll(request.Body)
+		if err != nil {
+			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
+			return
+		}
+		err = os.WriteFile(filePath, fileContents, 0644)
+		if err != nil {
+			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
+			return
+		}
+		HttpResponse(conn, StatusCreated, nil, contentTypePlainText, nil)
+
+	default:
+		HttpResponse(conn, StatusNotFound, nil, contentTypePlainText, nil)
+	}
 }
 
 func main() {
@@ -198,7 +193,7 @@ func main() {
 
 	listener, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
-		logError("Failed to bind to port 4221:", err)
+		fmt.Println("Failed to bind to port 4221:", err)
 		os.Exit(1)
 	}
 	defer listener.Close()
@@ -208,7 +203,7 @@ func main() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			logError("Error accepting connection:", err)
+			fmt.Println("Error accepting connection:", err)
 			continue
 		}
 		go Handler(conn, *directory)
