@@ -109,5 +109,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	Handler(conn)
+	go Handler(conn)
 }
