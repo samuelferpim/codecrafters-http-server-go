@@ -140,12 +140,27 @@ func Handler(conn net.Conn, directory string) {
 }
 
 func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
+	var responseBody []byte
 	if len(pathSegments) > 1 {
-		responseBody := []byte(pathSegments[1])
-		HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
-	} else {
-		HttpResponse(conn, StatusOK, nil, contentTypePlainText, contentEncoding)
+		responseBody = []byte(pathSegments[1])
 	}
+
+	if contentEncoding != nil && *contentEncoding == "gzip" {
+		var b bytes.Buffer
+		gw := gzip.NewWriter(&b)
+		defer gw.Close()
+
+		_, err := gw.Write(responseBody)
+		if err != nil {
+			fmt.Println("Error compressing response body:", err)
+			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
+			return
+		}
+
+		responseBody = b.Bytes()
+	}
+
+	HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
 }
 
 func handleUserAgent(conn net.Conn, request *http.Request, contentEncoding *string) {
