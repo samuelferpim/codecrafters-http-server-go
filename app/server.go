@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -12,7 +13,7 @@ import (
 	"strings"
 )
 
-func HttpResponse(conn net.Conn, status string, body *string) {
+func HttpResponse(conn net.Conn, status string, body *string, contentType string) {
 	mapStatus := map[string]string{
 		"200": "200 OK",
 		"404": "404 Not Found",
@@ -22,7 +23,7 @@ func HttpResponse(conn net.Conn, status string, body *string) {
 
 	if body != nil {
 		bodyLength := strconv.Itoa(len(*body))
-		headers := "Content-Type: text/plain\r\nContent-Length: " + bodyLength + "\r\n\r\n"
+		headers := "Content-Type: " + contentType + "\r\nContent-Length: " + bodyLength + "\r\n\r\n"
 		conn.Write([]byte(statusLine + headers + *body))
 	} else {
 		conn.Write([]byte(statusLine + "\r\n"))
@@ -63,7 +64,7 @@ func ProcessPath(request *http.Request) ([]string, error) {
 	return []string{}, errors.New("invalid path")
 }
 
-func Handler(conn net.Conn) {
+func Handler(conn net.Conn, directory string) {
 	defer conn.Close()
 
 	request, err := http.ReadRequest(bufio.NewReader(conn))
@@ -75,57 +76,52 @@ func Handler(conn net.Conn) {
 
 	pathSegments, err := ProcessPath(request)
 	if err != nil {
-		HttpResponse(conn, "404", nil)
+		HttpResponse(conn, "404", nil, "text/plain")
 		return
 	}
 
 	if len(pathSegments) == 0 {
-		HttpResponse(conn, "200", nil)
+		HttpResponse(conn, "200", nil, "text/plain")
 		return
 	}
 
 	switch pathSegments[0] {
 	case "echo":
 		if len(pathSegments) > 1 {
-			HttpResponse(conn, "200", &pathSegments[1])
+			HttpResponse(conn, "200", &pathSegments[1], "text/plain")
 		} else {
-			HttpResponse(conn, "200", nil)
+			HttpResponse(conn, "200", nil, "text/plain")
 		}
 	case "user-agent":
 		userAgentData := request.UserAgent()
-		HttpResponse(conn, "200", &userAgentData)
+		HttpResponse(conn, "200", &userAgentData, "text/plain")
 	case "files":
 		if len(pathSegments) > 1 {
 			file := pathSegments[1]
-			dir := os.Args[1] // Assume the directory is passed as the first argument
-			data, err := os.ReadFile(filepath.Join(dir, file))
+			data, err := os.ReadFile(filepath.Join(directory, file))
 			if err != nil {
-				response := "HTTP/1.1 404 Not Found\r\n\r\n"
-				conn.Write([]byte(response))
+				HttpResponse(conn, "404", nil, "text/plain")
 				return
 			}
-			response := "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + strconv.Itoa(len(data)) + "\r\n\r\n" + string(data) + "\r\n"
-			conn.Write([]byte(response))
+			body := string(data)
+			HttpResponse(conn, "200", &body, "application/octet-stream")
 		} else {
-			HttpResponse(conn, "404", nil)
+			HttpResponse(conn, "404", nil, "text/plain")
 		}
 	default:
-		HttpResponse(conn, "404", nil)
+		HttpResponse(conn, "404", nil, "text/plain")
 	}
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run server.go <directory>")
-		os.Exit(1)
-	}
+	directory := flag.String("directory", ".", "The directory to serve files from")
+	flag.Parse()
 
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
 		fmt.Println("Failed to bind to port 4221")
 		os.Exit(1)
 	}
-
 	for {
 		conn, err := l.Accept()
 		if err != nil {
@@ -133,6 +129,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		go Handler(conn)
+		go Handler(conn, *directory)
 	}
 }
