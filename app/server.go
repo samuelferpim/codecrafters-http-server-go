@@ -42,7 +42,8 @@ func ProcessPath(request *http.Request) ([]string, error) {
 	segments := GetPathSegments(request)
 
 	validPaths := map[string]struct{}{
-		"echo": {},
+		"echo":       {},
+		"user-agent": {},
 	}
 
 	if len(segments) == 0 {
@@ -87,6 +88,9 @@ func Handler(conn net.Conn) {
 		} else {
 			HttpResponse(conn, "200", nil)
 		}
+	} else if pathSegments[0] == "user-agent" {
+		userAgentData := request.UserAgent()
+		HttpResponse(conn, "200", &userAgentData)
 	} else {
 		HttpResponse(conn, "404", nil)
 	}
