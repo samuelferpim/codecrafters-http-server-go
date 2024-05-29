@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,29 +27,14 @@ const (
 func HttpResponse(conn net.Conn, status string, body *[]byte, contentType string, contentEncoding *string) {
 	statusLine := "HTTP/1.1 " + status + "\r\n"
 	headers := "Content-Type: " + contentType + "\r\n"
-
+	if contentEncoding != nil {
+		headers += "Content-Encoding: " + *contentEncoding + "\r\n"
+	}
 	if body != nil {
-		var compressedBody []byte
-		if contentEncoding != nil && *contentEncoding == "gzip" {
-			var buf bytes.Buffer
-			gw := gzip.NewWriter(&buf)
-			_, err := gw.Write(*body)
-			if err != nil {
-				fmt.Println("Error compressing response body:", err)
-				HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-				return
-			}
-			gw.Close()
-			compressedBody = buf.Bytes()
-			headers += "Content-Encoding: gzip\r\n"
-		} else {
-			compressedBody = *body
-		}
-
-		bodyLength := strconv.Itoa(len(compressedBody))
+		bodyLength := strconv.Itoa(len(*body))
 		headers += "Content-Length: " + bodyLength + "\r\n\r\n"
 		conn.Write([]byte(statusLine + headers))
-		conn.Write(compressedBody)
+		conn.Write(*body)
 	} else {
 		headers += "\r\n"
 		conn.Write([]byte(statusLine + headers))
@@ -139,25 +122,12 @@ func Handler(conn net.Conn, directory string) {
 }
 
 func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
-	var responseBody []byte
 	if len(pathSegments) > 1 {
-		responseBody = []byte(pathSegments[1])
+		responseBody := []byte(pathSegments[1])
+		HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
+	} else {
+		HttpResponse(conn, StatusOK, nil, contentTypePlainText, contentEncoding)
 	}
-
-	if contentEncoding != nil && *contentEncoding == "gzip" {
-		var b bytes.Buffer
-		gw := gzip.NewWriter(&b)
-		_, err := gw.Write(responseBody)
-		if err != nil {
-			fmt.Println("Error compressing response body:", err)
-			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-			return
-		}
-		gw.Close()
-		responseBody = b.Bytes()
-	}
-
-	HttpResponse(conn, StatusOK, &responseBody, contentTypePlainText, contentEncoding)
 }
 
 func handleUserAgent(conn net.Conn, request *http.Request, contentEncoding *string) {
