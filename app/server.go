@@ -24,8 +24,6 @@ const (
 	bufferSize                = 4096
 )
 
-var contentEncodingGzip = "gzip"
-
 func HttpResponse(conn net.Conn, status string, body *[]byte, contentType string, contentEncoding *string) {
 	statusLine := "HTTP/1.1 " + status + "\r\n"
 	headers := "Content-Type: " + contentType + "\r\n"
@@ -92,10 +90,23 @@ func Handler(conn net.Conn, directory string) {
 		return
 	}
 
-	var contentEncoding *string
+	supportedEncodings := []string{"gzip"}
+
 	acceptEncoding := request.Header.Get("Accept-Encoding")
-	if strings.Contains(strings.ToLower(acceptEncoding), "gzip") {
-		contentEncoding = &contentEncodingGzip
+	acceptedEncodings := strings.Split(acceptEncoding, ",")
+
+	var contentEncoding *string
+	for _, accepted := range acceptedEncodings {
+		accepted = strings.TrimSpace(accepted)
+		for _, supported := range supportedEncodings {
+			if accepted == supported {
+				contentEncoding = &accepted
+				break
+			}
+		}
+		if contentEncoding != nil {
+			break
+		}
 	}
 
 	switch pathSegments[0] {
