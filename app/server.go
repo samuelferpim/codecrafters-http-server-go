@@ -30,32 +30,31 @@ func HttpResponse(conn net.Conn, status string, body *[]byte, contentType string
 	statusLine := "HTTP/1.1 " + status + "\r\n"
 	headers := "Content-Type: " + contentType + "\r\n"
 
-	if contentEncoding != nil && *contentEncoding == "gzip" && body != nil {
-		var b bytes.Buffer
-		gw := gzip.NewWriter(&b)
-		defer gw.Close()
-
-		_, err := gw.Write(*body)
-		if err != nil {
-			fmt.Println("Error compressing response body:", err)
-			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
-			return
-		}
-
-		headers += "Content-Encoding: gzip\r\n"
-		headers += "Content-Length: " + strconv.Itoa(b.Len()) + "\r\n\r\n"
-		conn.Write([]byte(statusLine + headers))
-		conn.Write(b.Bytes())
-	} else {
-		if body != nil {
-			bodyLength := strconv.Itoa(len(*body))
-			headers += "Content-Length: " + bodyLength + "\r\n\r\n"
-			conn.Write([]byte(statusLine + headers))
-			conn.Write(*body)
+	if body != nil {
+		var compressedBody []byte
+		if contentEncoding != nil && *contentEncoding == "gzip" {
+			var buf bytes.Buffer
+			gw := gzip.NewWriter(&buf)
+			_, err := gw.Write(*body)
+			if err != nil {
+				fmt.Println("Error compressing response body:", err)
+				HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
+				return
+			}
+			gw.Close()
+			compressedBody = buf.Bytes()
+			headers += "Content-Encoding: gzip\r\n"
 		} else {
-			headers += "\r\n"
-			conn.Write([]byte(statusLine + headers))
+			compressedBody = *body
 		}
+
+		bodyLength := strconv.Itoa(len(compressedBody))
+		headers += "Content-Length: " + bodyLength + "\r\n\r\n"
+		conn.Write([]byte(statusLine + headers))
+		conn.Write(compressedBody)
+	} else {
+		headers += "\r\n"
+		conn.Write([]byte(statusLine + headers))
 	}
 }
 
@@ -148,15 +147,13 @@ func handleEcho(conn net.Conn, pathSegments []string, contentEncoding *string) {
 	if contentEncoding != nil && *contentEncoding == "gzip" {
 		var b bytes.Buffer
 		gw := gzip.NewWriter(&b)
-		defer gw.Close()
-
 		_, err := gw.Write(responseBody)
 		if err != nil {
 			fmt.Println("Error compressing response body:", err)
 			HttpResponse(conn, StatusInternalServerError, nil, contentTypePlainText, nil)
 			return
 		}
-
+		gw.Close()
 		responseBody = b.Bytes()
 	}
 
