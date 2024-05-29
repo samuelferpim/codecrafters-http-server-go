@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -44,6 +45,7 @@ func ProcessPath(request *http.Request) ([]string, error) {
 	validPaths := map[string]struct{}{
 		"echo":       {},
 		"user-agent": {},
+		"files":      {},
 	}
 
 	if len(segments) == 0 {
@@ -82,26 +84,48 @@ func Handler(conn net.Conn) {
 		return
 	}
 
-	if pathSegments[0] == "echo" {
+	switch pathSegments[0] {
+	case "echo":
 		if len(pathSegments) > 1 {
 			HttpResponse(conn, "200", &pathSegments[1])
 		} else {
 			HttpResponse(conn, "200", nil)
 		}
-	} else if pathSegments[0] == "user-agent" {
+	case "user-agent":
 		userAgentData := request.UserAgent()
 		HttpResponse(conn, "200", &userAgentData)
-	} else {
+	case "files":
+		if len(pathSegments) > 1 {
+			file := pathSegments[1]
+			dir := os.Args[1] // Assume the directory is passed as the first argument
+			data, err := os.ReadFile(filepath.Join(dir, file))
+			if err != nil {
+				response := "HTTP/1.1 404 Not Found\r\n\r\n"
+				conn.Write([]byte(response))
+				return
+			}
+			response := "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: " + strconv.Itoa(len(data)) + "\r\n\r\n" + string(data) + "\r\n"
+			conn.Write([]byte(response))
+		} else {
+			HttpResponse(conn, "404", nil)
+		}
+	default:
 		HttpResponse(conn, "404", nil)
 	}
 }
 
 func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run server.go <directory>")
+		os.Exit(1)
+	}
+
 	l, err := net.Listen("tcp", "0.0.0.0:4221")
 	if err != nil {
 		fmt.Println("Failed to bind to port 4221")
 		os.Exit(1)
 	}
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
